@@ -27,6 +27,12 @@ namespace ND.MessageBroker.Services
         {
             _logger = logger;
 
+            if (configuration == null)
+            {
+                _logger.LogWarning("Rabbit configuration  not found");
+                return;
+            }
+
             _configuration = configuration;
 
             connectionFactory = new ConnectionFactory
@@ -36,7 +42,7 @@ namespace ND.MessageBroker.Services
                 VirtualHost = _configuration.VirtualHost,
                 HostName = _configuration.HostName,
                 Port = _configuration.Port
-            }; 
+            };
 
             try
             {
@@ -54,7 +60,7 @@ namespace ND.MessageBroker.Services
                 {
                     _channel.QueueDeclare(
                                     queue: queue.Name,
-                                    durable: false,
+                                    durable: true,
                                     exclusive: false,
                                     autoDelete: false,
                                     arguments: null
@@ -67,7 +73,7 @@ namespace ND.MessageBroker.Services
             }
             catch (Exception e)
             {
-                _logger.LogError(e.Message);
+                _logger.LogError($"Failed to subscribe to host {configuration.HostName}:{configuration.Port}, user {configuration.Username} : {e.Message}");
             }
 
         }
@@ -82,6 +88,9 @@ namespace ND.MessageBroker.Services
         {
             try
             {
+                if (_channel == null)
+                    throw new Exception("Channel break");
+
                 stoppingToken.ThrowIfCancellationRequested();
 
                 var consumer = new EventingBasicConsumer(_channel);
@@ -111,17 +120,19 @@ namespace ND.MessageBroker.Services
             }
             catch (Exception e)
             {
-                _logger.LogError(e.Message);
+                _logger.LogError("Error to subscribe:" + e.Message);
                 return Task.CompletedTask;
             }
         }
 
         private void OnConsumerCancelled(object sender, ConsumerEventArgs e)
         {
+            _logger.LogError("ConsumerCancelled");
         }
 
         private void OnConsumerUnregistered(object sender, ConsumerEventArgs e)
         {
+            _logger.LogError("ConsumerUnregistered");
         }
 
         private void OnConsumerRegistered(object sender, ConsumerEventArgs e)
@@ -130,10 +141,12 @@ namespace ND.MessageBroker.Services
 
         private void OnConsumerShutdown(object sender, ShutdownEventArgs e)
         {
+            _logger.LogError("ConsumerShutdown");
         }
 
         private void RabbitMQ_ConnectionShutdown(object sender, ShutdownEventArgs e)
         {
+            _logger.LogError("ConnectionShutdown");
         }
 
         public override void Dispose()

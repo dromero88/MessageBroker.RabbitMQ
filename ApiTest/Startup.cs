@@ -35,7 +35,7 @@ namespace ApiTest
 
             services.AddHostedService<SubscriptionService>(); //Añado el servicio de suscripciones
 
-            services.AddSingleton<IPublishingService>(x => new PublishingService(Configuration.GetSection("RabbitConfig").Get<BrokerConfiguration>()));
+            services.AddTransient<IPublishingService, PublishingService>(); //Añado publicador
 
             services.AddControllers();
 

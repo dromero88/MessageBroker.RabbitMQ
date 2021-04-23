@@ -1,4 +1,5 @@
-﻿using ND.MessageBroker.RabbitMQ.Contracts;
+﻿using Microsoft.Extensions.Logging;
+using ND.MessageBroker.RabbitMQ.Contracts;
 using Newtonsoft.Json;
 using RabbitMQ.Client;
 using System;
@@ -11,8 +12,12 @@ namespace ND.MessageBroker.Services
     {
         private readonly ConnectionFactory connectionFactory;
 
-        public PublishingService(IBrokerConfiguration configuration)
+        private readonly ILogger<PublishingService> _logger;
+
+        public PublishingService(IBrokerConfiguration configuration, ILogger<PublishingService> logger)
         {
+            _logger = logger;
+
             connectionFactory = new ConnectionFactory
             {
                 UserName = configuration.Username,
@@ -25,22 +30,40 @@ namespace ND.MessageBroker.Services
 
         public void PublishMessage(object message, string exchange, string routingKey)
         {
-            using (var conn = connectionFactory.CreateConnection())
+            try
             {
-                using (var channel = conn.CreateModel())
+                using (var conn = connectionFactory.CreateConnection())
                 {
-                    channel.ExchangeDeclare(exchange: exchange, type: ExchangeType.Fanout, durable: true);
+                    using (var channel = conn.CreateModel())
+                    {
+                        try //Si falla intentamos eliminar y crear
+                        {
+                            channel.ExchangeDeclare(exchange: exchange, type: ExchangeType.Fanout, durable: true);
+                            _logger.LogInformation($"Created/Conected exchange {exchange}");
+                        }
+                        catch(Exception e)
+                        {
+                            _logger.LogError($"Error creating exchange {exchange}: {e.Message}. Try to drop exchange and recreate");
+                            channel.ExchangeDelete(exchange);
+                            channel.ExchangeDeclare(exchange: exchange, type: ExchangeType.Fanout, durable: true);
+                            _logger.LogInformation($"Created/Conected exchange {exchange}");
+                        }
 
-                    var jsonPayload = JsonConvert.SerializeObject(message);
+                        var jsonPayload = JsonConvert.SerializeObject(message);
 
-                    var body = Encoding.UTF8.GetBytes(jsonPayload);
+                        var body = Encoding.UTF8.GetBytes(jsonPayload);
 
-                    channel.BasicPublish(exchange: exchange,
-                        routingKey: routingKey,
-                        basicProperties: null,
-                        body: body
-                    );
+                        channel.BasicPublish(exchange: exchange,
+                            routingKey: routingKey,
+                            basicProperties: null,
+                            body: body
+                        );
+                    }
                 }
+            }
+            catch(Exception e)
+            {
+                _logger.LogError($"Error to publish message to exchange {exchange}: {e.Message}");
             }
         }
     }
