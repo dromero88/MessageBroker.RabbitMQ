@@ -12,7 +12,7 @@ namespace ND.MessageBroker.Services
     {
         private readonly ConnectionFactory connectionFactory;
 
-        private readonly ILogger<PublishingService> _logger;
+        public readonly ILogger<PublishingService> _logger;
 
         public PublishingService(IBrokerConfiguration configuration, ILogger<PublishingService> logger)
         {
@@ -39,7 +39,6 @@ namespace ND.MessageBroker.Services
                         try //Si falla intentamos eliminar y crear
                         {
                             channel.ExchangeDeclare(exchange: exchange, type: ExchangeType.Fanout, durable: true);
-                            _logger.LogInformation($"Created/Conected exchange {exchange}");
                         }
                         catch(Exception e)
                         {

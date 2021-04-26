@@ -4,6 +4,7 @@ using ND.MessageBroker.RabbitMQ.Contracts;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace ApiTest.Controllers
@@ -12,10 +13,6 @@ namespace ApiTest.Controllers
     [Route("[controller]")]
     public class TestController : ControllerBase
     {
-        private static readonly string[] Summaries = new[]
-        {
-            "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-        };
 
         private readonly ILogger<TestController> _logger;
 
@@ -30,8 +27,36 @@ namespace ApiTest.Controllers
         [HttpGet]
         public async Task<bool> Get()
         {
-            _publishingService.PublishMessage("Hola", "Test", "Message"); 
+            while (true) //publish infinite messages
+            {
+                try
+                {
+                    _publishingService.PublishMessage(RandomString(10), "Test", "Message");
+                    _publishingService.PublishMessage(RandomString(10), "Test2", "Message");
+                    Thread.Sleep(2000);
+                }
+                catch (Exception e)
+                {
+                    _logger.LogError("Error to publish message");
+                }
+            }
             return true;
         }
+
+        private string RandomString(int length)
+        {
+
+            var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            var stringChars = new char[8];
+            var random = new Random();
+
+            for (int i = 0; i < stringChars.Length; i++)
+            {
+                stringChars[i] = chars[random.Next(chars.Length)];
+            }
+
+           return new String(stringChars);
+        }
+
     }
 }

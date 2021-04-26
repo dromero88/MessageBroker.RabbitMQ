@@ -23,7 +23,7 @@ namespace ApiTest.Subscriptions
 
             var message = Encoding.UTF8.GetString(body);
 
-            Console.WriteLine(message);
+            base._logger.LogInformation($"Message recived: {message}, routingKey => {ea.RoutingKey}, exchange => {ea.Exchange}");
         }
     }
 }

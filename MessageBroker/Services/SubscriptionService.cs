@@ -13,15 +13,17 @@ namespace ND.MessageBroker.Services
 {
     public class SubscriptionService :  BackgroundService
     {
-        private readonly ConnectionFactory connectionFactory;
-
-        private readonly ILogger<SubscriptionService> _logger;
+        private ConnectionFactory connectionFactory;
 
         private readonly IBrokerConfiguration _configuration;
 
-        private readonly IConnection _connection;
+        private IConnection _connection;
 
-        private readonly IModel _channel;
+        private IModel _channel;
+
+        private int ConsumerShutdownRecived = 0;
+
+        public readonly ILogger<SubscriptionService> _logger;
 
         public SubscriptionService(IBrokerConfiguration configuration, ILogger<SubscriptionService> logger)
         {
@@ -35,49 +37,204 @@ namespace ND.MessageBroker.Services
 
             _configuration = configuration;
 
-            connectionFactory = new ConnectionFactory
-            {
-                UserName = _configuration.Username,
-                Password = _configuration.Password,
-                VirtualHost = _configuration.VirtualHost,
-                HostName = _configuration.HostName,
-                Port = _configuration.Port
-            };
+            Connect();
+        }
 
+        #region conexionManagement
+        
+        public void Connect()
+        {
+            CreateConnection();
+
+            CreateChannel();
+
+            CreateExchangeQueuesAndBindings();           
+        }
+
+        private void CreateConnection()
+        {
             try
             {
+                connectionFactory = new ConnectionFactory
+                {
+                    UserName = _configuration.Username,
+                    Password = _configuration.Password,
+                    VirtualHost = _configuration.VirtualHost,
+                    HostName = _configuration.HostName,
+                    Port = _configuration.Port
+                };
+
                 _connection = connectionFactory.CreateConnection();
 
-                _connection.ConnectionShutdown += RabbitMQ_ConnectionShutdown;
+                _connection.ConnectionShutdown += OnConnectionShutdown;
 
-                _channel = _connection.CreateModel();
-
-                _channel.BasicQos(0, 1, true);
-
-                //Create queues and binds
-
-                foreach (QueueConfiguration queue in _configuration.Subscriptions)
-                {
-                    _channel.QueueDeclare(
-                                    queue: queue.Name,
-                                    durable: true,
-                                    exclusive: false,
-                                    autoDelete: false,
-                                    arguments: null
-                                );
-
-                    _channel.QueueBind(queue: queue.Name,
-                      exchange: queue.Exchange,
-                      routingKey: queue.RoutingKey);
-                }
+                _logger.LogInformation($"Connected to RabbitMQ server {_configuration.HostName}:{_configuration.Port}. (=^_^=)");
             }
             catch (Exception e)
             {
-                _logger.LogError($"Failed to subscribe to host {configuration.HostName}:{configuration.Port}, user {configuration.Username} : {e.Message}");
+                _logger.LogError($"Failed to create conexion to host {_configuration.HostName}:{_configuration.Port}, user {_configuration.Username} : {e.Message}. Try to reconect...");
+                Thread.Sleep(5000);
+                Connect();
+            }
+        }
+
+        private void CreateExchangeQueuesAndBindings()
+        {
+            if (_channel == null) return;
+            
+                foreach (QueueConfiguration queue in _configuration.Subscriptions)
+                    try
+                    {
+                        _channel.ExchangeDeclare(exchange: queue.Exchange, type: ExchangeType.Fanout, durable: true);
+
+                        _channel.QueueDeclare(
+                                        queue: queue.Name,
+                                        durable: true,
+                                        exclusive: false,
+                                        autoDelete: false,
+                                        arguments: null
+                                    );
+
+                        _channel.QueueBind(queue: queue.Name,
+                          exchange: queue.Exchange,
+                          routingKey: queue.RoutingKey);
+                    }
+                    catch (Exception e)
+                    {
+                        _logger.LogError($"Failed to create or binding queue {queue.Name}, exchange {queue.Exchange} and routing key {queue.RoutingKey} : {e.Message}");
+                    }
+        }
+
+        private void CreateChannel()
+        {
+            if (_connection == null) return;
+
+            try
+            {
+                _channel = _connection.CreateModel();
+
+                _channel.BasicQos(0, 1, true);
+            }
+            catch (Exception e)
+            {
+                _logger.LogError($"Failed to create channel: {e.Message}");
+            }
+        }
+
+        public void Cleanup()
+        {
+            try
+            {
+                _connection.Dispose();
+            }
+            catch (Exception e)
+            {
+                _logger.LogError($"Failed to cleanup connexion {_configuration.HostName}:{_configuration.Port}, user {_configuration.Username} : {e.Message}");
+            }
+        }
+
+        private void CleanupAndReconnect()
+        {
+            Cleanup();
+
+            Connect();
+        }
+
+        private void CreateConsumer()
+        {
+            try
+            {
+                foreach (QueueConfiguration queue in _configuration.Subscriptions)
+                {
+                    var consumer = new EventingBasicConsumer(_channel);
+                    consumer.Received += async (ch, ea) =>
+                    {
+                        try
+                        {
+                            await Process(ea, ch);
+                            if (_channel != null)
+                                _channel.BasicAck(ea.DeliveryTag, false);
+                        }
+                        catch (Exception e)
+                        {
+                            _logger.LogError(e.Message);
+                        }
+
+                        
+                    };
+
+                    if(_channel != null)
+                        _channel.BasicConsume(queue.Name, false, consumer);
+
+                    consumer.Shutdown += OnConsumerShutdown;
+                    consumer.Registered += OnConsumerRegistered;
+                    consumer.Unregistered += OnConsumerUnregistered;
+                    consumer.ConsumerCancelled += OnConsumerCancelled;
+
+                    //break;
+                }
+            } 
+            catch (Exception e)
+            {
+                _logger.LogError($"Creating subscription consumer: {e.Message}. Try to reconect and recreate consumer...");
+
+                Thread.Sleep(5000);
+
+                CleanupAndReconnect();
+
+                CreateConsumer();
             }
 
         }
 
+        #endregion
+
+        #region events
+        private void OnConsumerCancelled(object sender, ConsumerEventArgs e)
+        {
+            _logger.LogError("ConsumerCancelled");
+        }
+
+        private void OnConsumerUnregistered(object sender, ConsumerEventArgs e)
+        {
+            _logger.LogError("ConsumerUnregistered");
+        }
+
+        private void OnConsumerRegistered(object sender, ConsumerEventArgs e)
+        {
+            _logger.LogInformation("ConsumerRegistered");
+        }
+
+        private void OnConsumerShutdown(object sender, ShutdownEventArgs e)
+        {
+            _logger.LogError($"ConsumerShutdown: {e.ReplyText}");
+
+            ConsumerShutdownRecived += 1;
+
+            if(ConsumerShutdownRecived == _configuration.Subscriptions.Count)
+            {
+                ConsumerShutdownRecived = 0;
+                CreateConsumer();
+            }
+        }
+
+        private void OnConnectionShutdown(object sender, ShutdownEventArgs e)
+        {
+            _logger.LogError("ConnectionShutdown");
+
+            if (!_connection.IsOpen)
+            {
+                CleanupAndReconnect();
+            }
+        }
+
+        public override void Dispose()
+        {
+            _channel.Close();
+            _connection.Close();
+            base.Dispose();
+        }
+        #endregion
 
         public virtual async Task Process(BasicDeliverEventArgs ea, object? model)
         {
@@ -93,27 +250,7 @@ namespace ND.MessageBroker.Services
 
                 stoppingToken.ThrowIfCancellationRequested();
 
-                var consumer = new EventingBasicConsumer(_channel);
-                consumer.Received += async (ch, ea) =>
-                {
-                    try
-                    {
-                        await Process(ea, ch);
-                        _channel.BasicAck(ea.DeliveryTag, false);
-                    }
-                    catch (Exception e)
-                    {
-                        _logger.LogError(e.Message);
-                    }
-                };
-
-                consumer.Shutdown += OnConsumerShutdown;
-                consumer.Registered += OnConsumerRegistered;
-                consumer.Unregistered += OnConsumerUnregistered;
-                consumer.ConsumerCancelled += OnConsumerCancelled;
-
-                foreach (QueueConfiguration queue in _configuration.Subscriptions)
-                    _channel.BasicConsume(queue.Name, false, consumer);
+                CreateConsumer();
 
                 return Task.CompletedTask;
 
@@ -121,39 +258,9 @@ namespace ND.MessageBroker.Services
             catch (Exception e)
             {
                 _logger.LogError("Error to subscribe:" + e.Message);
+
                 return Task.CompletedTask;
             }
-        }
-
-        private void OnConsumerCancelled(object sender, ConsumerEventArgs e)
-        {
-            _logger.LogError("ConsumerCancelled");
-        }
-
-        private void OnConsumerUnregistered(object sender, ConsumerEventArgs e)
-        {
-            _logger.LogError("ConsumerUnregistered");
-        }
-
-        private void OnConsumerRegistered(object sender, ConsumerEventArgs e)
-        {
-        }
-
-        private void OnConsumerShutdown(object sender, ShutdownEventArgs e)
-        {
-            _logger.LogError("ConsumerShutdown");
-        }
-
-        private void RabbitMQ_ConnectionShutdown(object sender, ShutdownEventArgs e)
-        {
-            _logger.LogError("ConnectionShutdown");
-        }
-
-        public override void Dispose()
-        {
-            _channel.Close();
-            _connection.Close();
-            base.Dispose();
         }
     }
 }
