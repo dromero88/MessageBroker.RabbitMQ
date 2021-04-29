@@ -9,7 +9,7 @@ namespace ND.MessageBroker.RabbitMQ.Contracts
 
         string Password { get; set; }
 
-        int Port { get; set; }
+        int? Port { get; set; }
 
         string VirtualHost { get; set; }
 

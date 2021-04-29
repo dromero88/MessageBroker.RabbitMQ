@@ -61,7 +61,7 @@ namespace ND.MessageBroker.Services
                     Password = _configuration.Password,
                     VirtualHost = _configuration.VirtualHost,
                     HostName = _configuration.HostName,
-                    Port = _configuration.Port
+                    Port = _configuration.Port?? 5672
                 };
 
                 _connection = connectionFactory.CreateConnection();
@@ -85,7 +85,7 @@ namespace ND.MessageBroker.Services
                 foreach (QueueConfiguration queue in _configuration.Subscriptions)
                     try
                     {
-                        _channel.ExchangeDeclare(exchange: queue.Exchange, type: ExchangeType.Fanout, durable: true);
+                        _channel.ExchangeDeclare(exchange: queue.Exchange, type: ExchangeType.Topic, durable: true);
 
                         _channel.QueueDeclare(
                                         queue: queue.Name,

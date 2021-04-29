@@ -24,7 +24,7 @@ namespace ND.MessageBroker.Services
                 Password = configuration.Password,
                 VirtualHost = configuration.VirtualHost,
                 HostName = configuration.HostName,
-                Port = configuration.Port
+                Port = configuration.Port?? 5672
             };
         }
 
@@ -38,13 +38,13 @@ namespace ND.MessageBroker.Services
                     {
                         try //Si falla intentamos eliminar y crear
                         {
-                            channel.ExchangeDeclare(exchange: exchange, type: ExchangeType.Fanout, durable: true);
+                            channel.ExchangeDeclare(exchange: exchange, type: ExchangeType.Topic, durable: true);
                         }
                         catch(Exception e)
                         {
                             _logger.LogError($"Error creating exchange {exchange}: {e.Message}. Try to drop exchange and recreate");
                             channel.ExchangeDelete(exchange);
-                            channel.ExchangeDeclare(exchange: exchange, type: ExchangeType.Fanout, durable: true);
+                            channel.ExchangeDeclare(exchange: exchange, type: ExchangeType.Topic, durable: true);
                             _logger.LogInformation($"Created/Conected exchange {exchange}");
                         }
 
